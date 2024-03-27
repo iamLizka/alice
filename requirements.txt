@@ -1,0 +1,7 @@
+blinker
+click
+colorama
+Flask
+Jinja2
+Werkzeug
+
