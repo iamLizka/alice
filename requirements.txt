@@ -4,4 +4,5 @@ colorama
 Flask
 Jinja2
 Werkzeug
+requests
 
