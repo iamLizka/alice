@@ -5,4 +5,4 @@ Flask
 Jinja2
 Werkzeug
 requests
-
+urllib3

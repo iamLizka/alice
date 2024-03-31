@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import logging
 import json
 import requests
+from geopy.distance import geodesic
 
 app = Flask(__name__)
 
@@ -86,13 +87,64 @@ def handle_dialog(res, req):
     # что хочет увидеть.
     else:
         if len(req["request"]["command"].split()) == 1:
-            country = get_country(req["request"]["command"])
+            city = req["request"]["command"]
+            country = get_country(city)
             if country:
-                res['response']['text'] = country
+                res['response']['text'] = f"{city.title()} находится в {country}"
             else:
                 res['response']['text'] = 'Не знаю такой город.'
+
+        elif len(req["request"]["command"].split()) == 2:
+            city1, city2 = req["request"]["command"].split()
+            distance = get_distance(req["request"]["command"].split())
+            if distance:
+                res['response']['text'] = f"Расстояние между городами {city1.title()} и {city2.title()} - {distance} км"
+            else:
+                res['response']['text'] = 'Не знаю такие города.'
+
+        else:
+            res['response']['text'] = 'Слишком много городов. Я запуталась.'
+
         res['response']['buttons'] = [{'title': 'помощь',
                                        'hide': True}]
+
+
+def get_distance(cities):
+
+    geocoder_api_server = "http://geocode-maps.yandex.ru/1.x/"
+
+    geocoder_params1 = {
+        "apikey": "40d1649f-0493-4b70-98ba-98533de7710b",
+        "geocode": cities[0],
+        "format": "json"}
+
+    geocoder_params2 = geocoder_params1.copy()
+    geocoder_params2['geocode'] = cities[1]
+
+    response1 = requests.get(geocoder_api_server, params=geocoder_params1)
+    response2 = requests.get(geocoder_api_server, params=geocoder_params2)
+
+    if not response1 or not response2:
+        return False
+
+    json_response1 = response1.json()
+    json_response2 = response2.json()
+
+    try:
+        toponym_longitude1, toponym_lattitude1 = json_response1["response"]["GeoObjectCollection"][
+            "featureMember"][0]["GeoObject"]["Point"]["pos"].split(" ")
+        toponym_longitude2, toponym_lattitude2 = json_response2["response"]["GeoObjectCollection"][
+            "featureMember"][0]["GeoObject"]["Point"]["pos"].split(" ")
+    except:
+        return False
+
+    # Создайте кортежи с координатами
+    coord_city1 = (toponym_lattitude1, toponym_longitude1)
+    coord_city2 = (toponym_lattitude2, toponym_longitude2)
+
+    # Вычислите расстояние между городами
+    distance = geodesic(coord_city1, coord_city2).kilometers
+    return round(distance, 2)
 
 
 def get_country(city):
@@ -109,8 +161,11 @@ def get_country(city):
         return False
 
     json_response = response.json()
-    country = json_response["response"]["GeoObjectCollection"]["featureMember"][1][
-        "GeoObject"]["metaDataProperty"]["GeocoderMetaData"]["Address"]["Components"][0]["name"]
+    try:
+        country = json_response["response"]["GeoObjectCollection"]["featureMember"][0][
+            "GeoObject"]["metaDataProperty"]["GeocoderMetaData"]["Address"]["Components"][0]["name"]
+    except:
+        return False
 
     return country
 
