@@ -1,25 +1,25 @@
 from flask import Flask, request, jsonify
 import logging
-
+import json
+import requests
 
 app = Flask(__name__)
 
-# Устанавливаем уровень логирования
 logging.basicConfig(level=logging.INFO)
 
-# Создадим словарь, чтобы для каждой сессии общения
-# с навыком хранились подсказки, которые видел пользователь.
+# создаем словарь, в котором ключ — название города,
+# а.json значение — массив, где перечислены id картинок,
+# которые мы записали в прошлом пункте.
 
+
+# создаем словарь, где для каждого пользователя
+# мы будем хранить его имя
 sessionStorage = {}
-# животные, которые мы хотим продать
-animals = ['слона', 'кролика', 'таракана', 'крокодила', 'гиппопотама']
 
 
 @app.route('/post', methods=['POST'])
-# Функция получает тело запроса и возвращает ответ.
 def main():
     logging.info(f'Request: {request.json!r}')
-
     response = {
         'session': request.json['session'],
         'version': request.json['version'],
@@ -27,97 +27,103 @@ def main():
             'end_session': False
         }
     }
-
-    # Отправляем request.json и response в функцию handle_dialog.
-    handle_dialog(request.json, response)
-
-    logging.info(f'Response:  {response!r}')
-
+    handle_dialog(response, request.json)
+    logging.info(f'Response: {response!r}')
     return jsonify(response)
 
 
-def handle_dialog(req, res):
-    global animals
+def handle_dialog(res, req):
     user_id = req['session']['user_id']
 
+    # если пользователь новый, то просим его представиться.
     if req['session']['new']:
+        res['response']['text'] = 'Привет! Назови свое имя!'
+        # создаем словарь в который в будущем положим имя пользователя
         sessionStorage[user_id] = {
-            'suggests': [
-                "Не хочу.",
-                "Не буду.",
-                "Отстань!",
-            ]
+            'first_name': None
         }
-
-        # Заполняем текст ответа
-        res['response']['text'] = f'Привет! Купи {animals[0]}!'
-        # Получим подсказки
-        res['response']['buttons'] = get_suggests(user_id)
         return
 
-    # Сюда дойдем только, если пользователь не новый,
-    # и разговор с Алисой уже был начат
-    # Обрабатываем ответ пользователя.
-    if req['request']['original_utterance'].lower() in [
-        'окей',
-        'ладно',
-        'куплю',
-        'покупаю',
-        'хорошо'
-    ]:
-        # Пользователь согласился, прощаемся.
-        res['response']['text'] = f'{animals[0].title()} можно найти на Яндекс.Маркете!'
+    if req['request']['command'] == 'помощь':
+        res['response']['buttons'] = [{'title': 'продожить',
+                                       'hide': True}]
 
-        # убираем первое животное, тк продали
-        animals = animals[1::]
-        # если всех жвотных продали, то завершаем сессию
-        if not animals:
-            res['response']['end_session'] = True
+        res['response']['text'] = 'помощи не будет'
+        return
+
+    if req['request']['command'] == 'продожить':
+        res['response']['text'] = 'Напиши мне город, а я тебе страну, в котором этот город находится.' \
+                                  + ' Еще можещь отправить мне 2 города и я посчитаю расстояние между ними.'
+        res['response']['buttons'] = [{'title': 'помощь',
+                                       'hide': True}]
+        return
+
+    # если пользователь не новый, то попадаем сюда.
+    # если поле имени пустое, то это говорит о том,
+    # что пользователь еще не представился.
+    if sessionStorage[user_id]['first_name'] is None:
+        # в последнем его сообщение ищем имя.
+        first_name = get_first_name(req)
+        # если не нашли, то сообщаем пользователю что не расслышали.
+        if first_name is None:
+            res['response']['text'] = \
+                'Не расслышала имя. Повтори, пожалуйста!'
+        # если нашли, то приветствуем пользователя.
+        # И спрашиваем какой город он хочет увидеть.
         else:
-            sessionStorage[user_id] = {
-                'suggests': [
-                    "Не хочу.",
-                    "Не буду.",
-                    "Отстань!",
-                ]
-            }
+            sessionStorage[user_id]['first_name'] = first_name
+            res['response'][
+                'text'] = 'Приятно познакомиться, ' \
+                          + first_name.title() \
+                          + '. Я - Алиса. Напиши мне город, а я тебе страну, в котором этот город находится.' \
+                          + ' Еще можещь отправить мне 2 города и я посчитаю расстояние между ними.'
 
-            # добавляем текст к ответу
-            res['response']['text'] += f'\nУ нас ещё есть {animals[0][0:-1]}! Купи {animals[0]}!'
-            # Получим подсказки
-            res['response']['buttons'] = get_suggests(user_id)
-        return
+            res['response']['buttons'] = [{'title': 'помощь',
+                                           'hide': True}]
 
-    # Если нет, то убеждаем его купить животное!
-    res['response']['text'] = \
-        f"Все говорят '{req['request']['original_utterance']}', а ты купи {animals[0]}!"
-    res['response']['buttons'] = get_suggests(user_id)
+    # если мы знакомы с пользователем и он нам что-то написал,
+    # то это говорит о том, что он уже говорит о городе,
+    # что хочет увидеть.
+    else:
+        if len(req["request"]["command"].split()) == 1:
+            country = get_country(req["request"]["command"])
+            if country:
+                res['response']['text'] = country
+            else:
+                res['response']['text'] = 'Не знаю такой город.'
+        res['response']['buttons'] = [{'title': 'помощь',
+                                       'hide': True}]
 
 
-# Функция возвращает две подсказки для ответа.
-def get_suggests(user_id):
-    session = sessionStorage[user_id]
+def get_country(city):
+    geocoder_api_server = "http://geocode-maps.yandex.ru/1.x/"
 
-    # Выбираем две первые подсказки из массива.
-    suggests = [
-        {'title': suggest, 'hide': True}
-        for suggest in session['suggests'][:2]
-    ]
+    geocoder_params = {
+        "apikey": "40d1649f-0493-4b70-98ba-98533de7710b",
+        "geocode": city,
+        "format": "json"}
 
-    # Убираем первую подсказку, чтобы подсказки менялись каждый раз.
-    session['suggests'] = session['suggests'][1:]
-    sessionStorage[user_id] = session
+    response = requests.get(geocoder_api_server, params=geocoder_params)
 
-    # Если осталась только одна подсказка, предлагаем подсказку
-    # со ссылкой на Яндекс.Маркет.
-    if len(suggests) < 2:
-        suggests.append({
-            "title": "Ладно",
-            "hide": True,
-            "url": f"https://market.yandex.ru/search?text={animals[0][0:-1]}",
-        })
+    if not response:
+        return False
 
-    return suggests
+    json_response = response.json()
+    country = json_response["response"]["GeoObjectCollection"]["featureMember"][1][
+        "GeoObject"]["metaDataProperty"]["GeocoderMetaData"]["Address"]["Components"][0]["name"]
+
+    return country
+
+
+def get_first_name(req):
+    # перебираем сущности
+    for entity in req['request']['nlu']['entities']:
+        # находим сущность с типом 'YANDEX.FIO'
+        if entity['type'] == 'YANDEX.FIO':
+            # Если есть сущность с ключом 'first_name',
+            # то возвращаем ее значение.
+            # Во всех остальных случаях возвращаем None.
+            return entity['value'].get('first_name', None)
 
 
 if __name__ == '__main__':
